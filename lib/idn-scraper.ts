@@ -12,19 +12,24 @@ const LOGIN_URL =
   "https://connect.idn.media/?client_id=6gnaj30oomhtl0t3qtkfp2uir9&redirect_uri=https://www.idn.app/&authorization_code=ef04562d-89e7-4322-b8ef-86dc4bf49814&state=dU5LvM8nvbI0REKm86t3hPjyXghAWS4m";
 
 async function launchBrowser(): Promise<Browser> {
-  const isVercel = !!process.env.VERCEL;
-  if (isVercel) {
-    return puppeteer.launch({
-      args: chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath: await chromium.executablePath(),
-      headless: chromium.headless,
-    });
-  }
+  // Selalu pakai @sparticuz/chromium di Vercel (serverless Linux)
+  const executablePath = await chromium.executablePath();
+
   return puppeteer.launch({
-    headless: true,
-    executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome",
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
+    args: [
+      ...chromium.args,
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+      "--no-first-run",
+      "--no-zygote",
+      "--single-process",
+    ],
+    defaultViewport: chromium.defaultViewport,
+    executablePath,
+    headless: chromium.headless,
+    ignoreHTTPSErrors: true,
   });
 }
 
