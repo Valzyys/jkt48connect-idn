@@ -1,60 +1,42 @@
-/**
- * worker/index.ts
- *
- * Long-running IMAP listener.
- * Jalankan di server/VPS terpisah (bukan Vercel, karena Vercel serverless).
- * Fungsinya: dengarkan email masuk → ekstrak OTP → simpan ke KV Redis.
- *
- * Deploy: Railway, Render, VPS, atau PM2 di server sendiri.
- *
- * Env yang dibutuhkan:
- *   KV_REST_API_URL
- *   KV_REST_API_TOKEN
- *   IMAP_HOST   (default: imap.gmail.com)
- *   IMAP_PORT   (default: 993)
- *   IMAP_SECURE (default: true)
- *   IMAP_USER   → email Gmail yang dipakai login IDN
- *   IMAP_PASS   → App Password Gmail (bukan password biasa)
- */
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { getAllSessions } from "../../lib/redis";
 
-import { createIMAPListener } from "../lib/imap-listener";
-
-async function main() {
-  console.log("╔════════════════════════════════════════╗");
-  console.log("║  IDN OTP IMAP Listener — Worker Start  ║");
-  console.log("╚════════════════════════════════════════╝");
-  console.log(`[Worker] Email : ${process.env.IMAP_USER}`);
-  console.log(`[Worker] Host  : ${process.env.IMAP_HOST ?? "imap.gmail.com"}`);
-  console.log(`[Worker] KV    : ${process.env.KV_REST_API_URL ? "✅ Connected" : "❌ Missing"}`);
-
-  if (!process.env.IMAP_USER || !process.env.IMAP_PASS) {
-    console.error("[Worker] ❌ IMAP_USER dan IMAP_PASS wajib diisi!");
-    process.exit(1);
-  }
-  if (!process.env.KV_REST_API_URL || !process.env.KV_REST_API_TOKEN) {
-    console.error("[Worker] ❌ KV_REST_API_URL dan KV_REST_API_TOKEN wajib diisi!");
-    process.exit(1);
+export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const apiKey = req.headers["x-api-key"] ?? req.query.apikey;
+  if (apiKey !== process.env.API_SECRET_KEY) {
+    return res.status(401).json({ status: false, error: "Unauthorized" });
   }
 
-  const listener = createIMAPListener();
+  if (req.method !== "GET") {
+    return res.status(405).json({ status: false, error: "Method not allowed" });
+  }
 
-  // Graceful shutdown
-  process.on("SIGINT", async () => {
-    console.log("\n[Worker] Menerima SIGINT, mematikan listener...");
-    await listener.stop();
-    process.exit(0);
-  });
-  process.on("SIGTERM", async () => {
-    console.log("\n[Worker] Menerima SIGTERM, mematikan listener...");
-    await listener.stop();
-    process.exit(0);
-  });
+  try {
+    const sessions = await getAllSessions();
 
-  await listener.start();
-  console.log("[Worker] ✅ IMAP Listener aktif, menunggu email OTP...\n");
+    const sanitized = sessions.map((s) => ({
+      email: s.email,
+      uuid: s.uuid,
+      status: s.status,
+      refreshCount: s.refreshCount,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      currentUrl: s.currentUrl,
+      hasIdToken: !!s.tokens.id_token,
+      hasAccessToken: !!s.tokens.access_token,
+      hasRefreshToken: !!s.tokens.refresh_token,
+      profileName:
+        s.responses.profileDetail?.data?.name ??
+        s.responses.profileDetail?.data?.username ??
+        null,
+    }));
+
+    return res.status(200).json({
+      status: true,
+      total: sessions.length,
+      data: sanitized,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ status: false, error: err.message });
+  }
 }
-
-main().catch((err) => {
-  console.error("[Worker] Fatal error:", err);
-  process.exit(1);
-});
