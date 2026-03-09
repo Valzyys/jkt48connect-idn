@@ -1,5 +1,4 @@
-import puppeteerExtra from "puppeteer-extra";
-import { Browser, Page } from "puppeteer-core";
+import puppeteer, { Browser } from "puppeteer-core";
 import {
   IDNSession,
   saveSession,
@@ -8,47 +7,101 @@ import {
   getSession,
 } from "./redis";
 
-// Import setiap evasion secara manual agar Vercel bisa bundle dengan benar
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-const stealth = StealthPlugin();
-
-// Nonaktifkan evasion yang bermasalah di Vercel, aktifkan yang penting saja
-stealth.enabledEvasions = new Set([
-  "chrome.runtime",
-  "defaultArgs",
-  "iframe.contentWindow",
-  "media.codecs",
-  "navigator.hardwareConcurrency",
-  "navigator.languages",
-  "navigator.permissions",
-  "navigator.plugins",
-  "navigator.vendor",
-  "navigator.webdriver",
-  "sourceurl",
-  "user-agent-override",
-  "webgl.vendor",
-  "window.outerdimensions",
-]);
-
-puppeteerExtra.use(stealth);
-
 const LOGIN_URL =
   "https://connect.idn.media/?client_id=6gnaj30oomhtl0t3qtkfp2uir9&redirect_uri=https://www.idn.app/&authorization_code=ef04562d-89e7-4322-b8ef-86dc4bf49814&state=dU5LvM8nvbI0REKm86t3hPjyXghAWS4m";
 
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36";
 
+// ─── Semua patch anti-bot inline, tanpa library external ─────────────────────
+const STEALTH_SCRIPT = `
+  // 1. Sembunyikan webdriver
+  Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+
+  // 2. Simulasi plugins browser asli
+  Object.defineProperty(navigator, 'plugins', {
+    get: () => {
+      const arr = [
+        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
+        { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
+      ];
+      arr.__proto__ = PluginArray.prototype;
+      return arr;
+    }
+  });
+
+  // 3. Languages
+  Object.defineProperty(navigator, 'languages', { get: () => ['id-ID', 'id', 'en-US', 'en'] });
+
+  // 4. Chrome object
+  window.chrome = {
+    app: {
+      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+      getDetails: () => null,
+      getIsInstalled: () => false,
+      installState: () => {},
+      isInstalled: false,
+      runningState: () => 'cannot_run',
+    },
+    runtime: {
+      OnInstalledReason: {},
+      OnRestartRequiredReason: {},
+      PlatformArch: {},
+      PlatformOs: {},
+      RequestUpdateCheckStatus: {},
+      connect: () => {},
+      sendMessage: () => {},
+    },
+    loadTimes: () => ({}),
+    csi: () => ({}),
+  };
+
+  // 5. Permissions
+  const originalQuery = window.navigator.permissions.query;
+  window.navigator.permissions.query = (parameters) => {
+    if (parameters.name === 'notifications') {
+      return Promise.resolve({ state: Notification.permission });
+    }
+    return originalQuery(parameters);
+  };
+
+  // 6. Hapus ciri automation
+  delete window.__nightmare;
+  delete window._phantom;
+  delete window.callPhantom;
+  delete window.__webdriver_evaluate;
+  delete window.__selenium_evaluate;
+
+  // 7. Hardware concurrency
+  Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 8 });
+
+  // 8. Platform
+  Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+
+  // 9. Vendor
+  Object.defineProperty(navigator, 'vendor', { get: () => 'Google Inc.' });
+
+  // 10. iframe contentWindow
+  Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+    get: function() {
+      return window;
+    }
+  });
+`;
+
 async function launchBrowser(): Promise<Browser> {
   const wsEndpoint = process.env.BROWSER_WS_ENDPOINT;
   if (!wsEndpoint) throw new Error("BROWSER_WS_ENDPOINT tidak diset.");
 
-  console.log("[Browser] Connecting with stealth...");
-  const browser = await puppeteerExtra.connect({
+  console.log("[Browser] Connecting...");
+  const browser = await puppeteer.connect({
     browserWSEndpoint: wsEndpoint,
     defaultViewport: { width: 1280, height: 800 },
-  } as any);
+  });
   console.log("[Browser] ✅ Connected");
-  return browser as unknown as Browser;
+  return browser;
 }
 
 async function debugPage(page: any, label: string) {
@@ -76,12 +129,19 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
 
   try {
     browser = await launchBrowser();
-    const page: any = await (browser as any).newPage();
+    const page = await browser.newPage();
 
+    // ── Inject semua patch sebelum halaman apapun dimuat ──────────────────
+    await page.evaluateOnNewDocument(STEALTH_SCRIPT);
     await page.setUserAgent(USER_AGENT);
     await page.setExtraHTTPHeaders({
       "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+      "sec-ch-ua": '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
     });
+
     page.setDefaultNavigationTimeout(60_000);
     page.setDefaultTimeout(60_000);
 
@@ -114,6 +174,7 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
 
     // ── Step 1: Buka halaman ───────────────────────────────────────────────
     await setJobStatus(email, { message: "Membuka halaman login IDN..." });
+    console.log("[IDN] goto login...");
     await page.goto(LOGIN_URL, { waitUntil: "networkidle2", timeout: 60_000 });
     await new Promise((r) => setTimeout(r, 2000));
     await debugPage(page, "after-goto");
@@ -128,11 +189,12 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
     }
 
     await new Promise((r) => setTimeout(r, 700));
+    console.log("[IDN] Email diisi, submit...");
     await page.click('button[type="submit"]');
-    await new Promise((r) => setTimeout(r, 3500));
+    await new Promise((r) => setTimeout(r, 4000));
     await debugPage(page, "after-submit");
 
-    // ── Step 3: Tunggu Kirim OTP / halaman OTP ────────────────────────────
+    // ── Step 3: Tunggu tombol Kirim OTP ───────────────────────────────────
     await setJobStatus(email, { message: "Menunggu tombol Kirim OTP..." });
 
     try {
@@ -148,7 +210,7 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
         { timeout: 30_000 },
       );
     } catch {
-      await debugPage(page, "timeout-otp");
+      await debugPage(page, "timeout-otp-button");
       throw new Error("Halaman OTP tidak muncul setelah 30 detik.");
     }
 
@@ -168,6 +230,8 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
       });
       console.log("[IDN] Klik Kirim OTP:", clicked ? "✅" : "❌");
       await new Promise((r) => setTimeout(r, 3000));
+    } else {
+      console.log("[IDN] Sudah di halaman OTP langsung");
     }
 
     // ── Step 4: Tunggu form OTP ────────────────────────────────────────────
@@ -279,7 +343,7 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
     throw err;
   } finally {
     if (browser) {
-      try { (browser as any).disconnect(); } catch {}
+      try { browser.disconnect(); } catch {}
     }
   }
 }
