@@ -1,6 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { getSession, getJobStatus } from "../../lib/redis";
+import { getJobStatus } from "../../lib/redis";
 
+/**
+ * GET /api/job/:email
+ * Cek status job login untuk email tertentu
+ * Status: idle | running | waiting_otp | done | failed
+ */
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   const apiKey = req.headers["x-api-key"] ?? req.query.apikey;
   if (apiKey !== process.env.API_SECRET_KEY) {
@@ -16,26 +21,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ status: false, error: "Email required" });
   }
 
-  try {
-    const [session, jobStatus] = await Promise.all([
-      getSession(email),
-      getJobStatus(email),
-    ]);
-
-    if (!session) {
-      return res.status(404).json({
-        status: false,
-        error: "Session not found",
-        jobStatus,
-      });
-    }
-
-    return res.status(200).json({
-      status: true,
-      data: session,
-      jobStatus,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ status: false, error: err.message });
+  const jobStatus = await getJobStatus(email);
+  if (!jobStatus) {
+    return res.status(404).json({ status: false, error: "Tidak ada job untuk email ini" });
   }
+
+  return res.status(200).json({ status: true, data: jobStatus });
 }
