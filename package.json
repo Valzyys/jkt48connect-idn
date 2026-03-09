@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only worker/index.ts",
     "build": "tsc",
-    "start": "node dist/worker/index.js",
-    "vercel-build": "tsc --noEmit"
+    "start": "node dist/worker/index.js"
   },
   "dependencies": {
     "imapflow": "^1.0.166",
