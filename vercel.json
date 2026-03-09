@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "tsc --noEmit",
+  "outputDirectory": ".",
   "functions": {
     "api/**/*.ts": {
       "maxDuration": 300
@@ -9,12 +11,6 @@
     {
       "path": "/api/cron/refresh",
       "schedule": "0 0 * * *"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
     }
   ]
 }
