@@ -10,6 +10,8 @@
   "dependencies": {
     "imapflow": "^1.0.166",
     "puppeteer-core": "^21.6.1",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "@sparticuz/chromium-min": "^119.0.2",
     "mailparser": "^3.7.1"
   },
