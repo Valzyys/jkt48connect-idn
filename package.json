@@ -4,13 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only worker/index.ts",
-    "build": "tsc",
+    "build": "tsc --noEmit",
     "start": "node dist/worker/index.js"
   },
   "dependencies": {
     "imapflow": "^1.0.166",
-    "puppeteer-core": "^22.0.0",
-    "@sparticuz/chromium": "^123.0.0",
+    "puppeteer-core": "^21.11.0",
+    "@sparticuz/chromium": "^119.0.2",
     "mailparser": "^3.7.1"
   },
   "devDependencies": {
