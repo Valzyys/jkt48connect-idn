@@ -9,8 +9,8 @@
   },
   "dependencies": {
     "imapflow": "^1.0.166",
-    "puppeteer-core": "^21.11.0",
-    "@sparticuz/chromium": "^119.0.2",
+    "puppeteer-core": "^21.6.1",
+    "@sparticuz/chromium-min": "^119.0.2",
     "mailparser": "^3.7.1"
   },
   "devDependencies": {
