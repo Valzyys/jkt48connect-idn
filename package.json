@@ -17,6 +17,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/mailparser": "^3.4.4",
+    "@vercel/node": "^3.0.0",
     "typescript": "^5.4.0",
     "ts-node-dev": "^2.0.0"
   }
