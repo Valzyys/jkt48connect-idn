@@ -1,6 +1,5 @@
-import puppeteer from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import { Browser } from "puppeteer-core";
+import puppeteerExtra from "puppeteer-extra";
+import { Browser, Page } from "puppeteer-core";
 import {
   IDNSession,
   saveSession,
@@ -9,8 +8,29 @@ import {
   getSession,
 } from "./redis";
 
-// Aktifkan stealth plugin — bypass reCAPTCHA & deteksi bot
-puppeteer.use(StealthPlugin());
+// Import setiap evasion secara manual agar Vercel bisa bundle dengan benar
+const StealthPlugin = require("puppeteer-extra-plugin-stealth");
+const stealth = StealthPlugin();
+
+// Nonaktifkan evasion yang bermasalah di Vercel, aktifkan yang penting saja
+stealth.enabledEvasions = new Set([
+  "chrome.runtime",
+  "defaultArgs",
+  "iframe.contentWindow",
+  "media.codecs",
+  "navigator.hardwareConcurrency",
+  "navigator.languages",
+  "navigator.permissions",
+  "navigator.plugins",
+  "navigator.vendor",
+  "navigator.webdriver",
+  "sourceurl",
+  "user-agent-override",
+  "webgl.vendor",
+  "window.outerdimensions",
+]);
+
+puppeteerExtra.use(stealth);
 
 const LOGIN_URL =
   "https://connect.idn.media/?client_id=6gnaj30oomhtl0t3qtkfp2uir9&redirect_uri=https://www.idn.app/&authorization_code=ef04562d-89e7-4322-b8ef-86dc4bf49814&state=dU5LvM8nvbI0REKm86t3hPjyXghAWS4m";
@@ -23,8 +43,7 @@ async function launchBrowser(): Promise<Browser> {
   if (!wsEndpoint) throw new Error("BROWSER_WS_ENDPOINT tidak diset.");
 
   console.log("[Browser] Connecting with stealth...");
-  // puppeteer-extra connect dengan stealth plugin aktif
-  const browser = await puppeteer.connect({
+  const browser = await puppeteerExtra.connect({
     browserWSEndpoint: wsEndpoint,
     defaultViewport: { width: 1280, height: 800 },
   } as any);
@@ -35,7 +54,9 @@ async function launchBrowser(): Promise<Browser> {
 async function debugPage(page: any, label: string) {
   try {
     const url = page.url();
-    const text: string = await page.evaluate(() => document.body?.innerText?.slice(0, 400) ?? "");
+    const text: string = await page.evaluate(
+      () => (document.body?.innerText ?? "").slice(0, 400)
+    );
     console.log(`[DEBUG:${label}] URL: ${url}`);
     console.log(`[DEBUG:${label}] Body: ${text}`);
   } catch (e: any) {
@@ -55,9 +76,8 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
 
   try {
     browser = await launchBrowser();
-    const page = await (browser as any).newPage();
+    const page: any = await (browser as any).newPage();
 
-    // Set UA & headers natural
     await page.setUserAgent(USER_AGENT);
     await page.setExtraHTTPHeaders({
       "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
@@ -92,33 +112,29 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
       } catch {}
     });
 
-    // ── Step 1: Buka halaman login ─────────────────────────────────────────
+    // ── Step 1: Buka halaman ───────────────────────────────────────────────
     await setJobStatus(email, { message: "Membuka halaman login IDN..." });
-    console.log("[IDN] goto login...");
     await page.goto(LOGIN_URL, { waitUntil: "networkidle2", timeout: 60_000 });
     await new Promise((r) => setTimeout(r, 2000));
     await debugPage(page, "after-goto");
 
-    // ── Step 2: Isi email seperti manusia ─────────────────────────────────
+    // ── Step 2: Isi email ──────────────────────────────────────────────────
     await page.waitForSelector('input[name="identity"]', { timeout: 20_000 });
     await page.click('input[name="identity"]');
-    await new Promise((r) => setTimeout(r, 300 + Math.random() * 400));
+    await new Promise((r) => setTimeout(r, 400 + Math.random() * 300));
 
-    // Ketik email per karakter dengan delay random
     for (const char of email) {
       await page.keyboard.type(char, { delay: 60 + Math.random() * 80 });
     }
 
-    await new Promise((r) => setTimeout(r, 600 + Math.random() * 400));
-    console.log("[IDN] Email diisi, submit...");
+    await new Promise((r) => setTimeout(r, 700));
     await page.click('button[type="submit"]');
     await new Promise((r) => setTimeout(r, 3500));
     await debugPage(page, "after-submit");
 
-    // ── Step 3: Tunggu tombol Kirim OTP atau halaman OTP ──────────────────
+    // ── Step 3: Tunggu Kirim OTP / halaman OTP ────────────────────────────
     await setJobStatus(email, { message: "Menunggu tombol Kirim OTP..." });
 
-    let foundOTPPage = false;
     try {
       await page.waitForFunction(
         () => {
@@ -131,26 +147,27 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
         },
         { timeout: 30_000 },
       );
-      foundOTPPage = true;
     } catch {
       await debugPage(page, "timeout-otp");
-      throw new Error("Halaman OTP tidak muncul setelah 30 detik. Kemungkinan masih diblokir reCAPTCHA.");
+      throw new Error("Halaman OTP tidak muncul setelah 30 detik.");
     }
 
     await debugPage(page, "before-click-otp");
-    const pageText: string = await page.evaluate(() => document.body?.innerText ?? "");
+    const pageText: string = await page.evaluate(
+      () => document.body?.innerText ?? ""
+    );
 
     if (pageText.includes("Kirim OTP")) {
       const clicked: boolean = await page.evaluate(() => {
         const btns = Array.from(document.querySelectorAll("button"));
-        const btn = btns.find((b) => (b as HTMLButtonElement).innerText.trim() === "Kirim OTP");
+        const btn = btns.find(
+          (b) => (b as HTMLButtonElement).innerText.trim() === "Kirim OTP"
+        );
         if (btn) { (btn as HTMLButtonElement).click(); return true; }
         return false;
       });
       console.log("[IDN] Klik Kirim OTP:", clicked ? "✅" : "❌");
       await new Promise((r) => setTimeout(r, 3000));
-    } else {
-      console.log("[IDN] Sudah di halaman OTP langsung");
     }
 
     // ── Step 4: Tunggu form OTP ────────────────────────────────────────────
@@ -193,7 +210,6 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
     }
 
     await new Promise((r) => setTimeout(r, 500));
-
     const verifyClicked: boolean = await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll("button"));
       const btn = btns.find(
@@ -206,7 +222,7 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
     });
     if (!verifyClicked) await page.keyboard.press("Enter");
 
-    // ── Step 7: Ambil cookies & simpan session ────────────────────────────
+    // ── Step 7: Simpan session ────────────────────────────────────────────
     await setJobStatus(email, { message: "Menunggu login selesai..." });
     await new Promise((r) => setTimeout(r, 6_000));
     await debugPage(page, "after-verify");
