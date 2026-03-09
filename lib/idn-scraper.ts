@@ -1,4 +1,4 @@
-import puppeteer, { Browser, Page } from "puppeteer-core";
+import puppeteer, { Browser } from "puppeteer-core";
 import chromium from "@sparticuz/chromium";
 import {
   IDNSession,
@@ -8,14 +8,11 @@ import {
   getSession,
 } from "./redis";
 
-// ─── Config ───────────────────────────────────────────────────────────────────
 const LOGIN_URL =
   "https://connect.idn.media/?client_id=6gnaj30oomhtl0t3qtkfp2uir9&redirect_uri=https://www.idn.app/&authorization_code=ef04562d-89e7-4322-b8ef-86dc4bf49814&state=dU5LvM8nvbI0REKm86t3hPjyXghAWS4m";
 
-// ─── Launch browser ───────────────────────────────────────────────────────────
 async function launchBrowser(): Promise<Browser> {
   const isVercel = !!process.env.VERCEL;
-
   if (isVercel) {
     return puppeteer.launch({
       args: chromium.args,
@@ -24,19 +21,13 @@ async function launchBrowser(): Promise<Browser> {
       headless: chromium.headless,
     });
   }
-
-  // Local development — pakai chrome yang terinstall
   return puppeteer.launch({
     headless: true,
-    executablePath:
-      process.env.CHROME_PATH ||
-      "/usr/bin/google-chrome" ||
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    executablePath: process.env.CHROME_PATH || "/usr/bin/google-chrome",
     args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-gpu"],
   });
 }
 
-// ─── Main scraper ─────────────────────────────────────────────────────────────
 export async function runIDNLogin(email: string): Promise<IDNSession> {
   await setJobStatus(email, {
     status: "running",
@@ -49,7 +40,6 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 800 });
 
-  // ─── Capture responses ────────────────────────────────────────────────────
   const captured: IDNSession["responses"] & { tokens?: any } = {
     cognitoIDN: null,
     initiateAuth: null,
@@ -85,53 +75,41 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
   });
 
   try {
-    // ── Step 1: Buka halaman login ─────────────────────────────────────────
+    // Step 1: Buka halaman login
     await setJobStatus(email, { message: "Membuka halaman login IDN..." });
-    console.log(`[IDN] [${email}] Step 1: goto login`);
     await page.goto(LOGIN_URL, { waitUntil: "networkidle2", timeout: 30_000 });
-
     await page.waitForSelector('input[name="identity"]', { timeout: 15_000 });
     await page.type('input[name="identity"]', email, { delay: 80 });
     await page.click('button[type="submit"]');
-    console.log(`[IDN] [${email}] Email diisi`);
 
-    // ── Step 2: Klik Kirim OTP ────────────────────────────────────────────
+    // Step 2: Klik Kirim OTP
     await setJobStatus(email, { message: "Menunggu halaman pilihan login..." });
     await page.waitForFunction(
-      () => document.body.innerText.includes("Kirim OTP"),
+      () => (document as Document).body.innerText.includes("Kirim OTP"),
       { timeout: 20_000 },
     );
     const buttons = await page.$$("button");
     for (const btn of buttons) {
-      const text = await btn.evaluate((el: Element) => (el as HTMLElement).innerText.trim());
-      if (text === "Kirim OTP") {
-        await btn.click();
-        break;
-      }
+      const text = await btn.evaluate((el) => (el as HTMLElement).innerText.trim());
+      if (text === "Kirim OTP") { await btn.click(); break; }
     }
-    console.log(`[IDN] [${email}] Klik Kirim OTP`);
 
-    // ── Step 3: Tunggu halaman OTP ────────────────────────────────────────
+    // Step 3: Tunggu halaman OTP
     await setJobStatus(email, { message: "Menunggu halaman input OTP..." });
     await page.waitForFunction(
-      () => document.body.innerText.includes("Masukkan kode"),
+      () => (document as Document).body.innerText.includes("Masukkan kode"),
       { timeout: 20_000 },
     );
-    console.log(`[IDN] [${email}] Halaman OTP muncul, menunggu OTP dari email...`);
 
-    // ── Step 4: Tunggu OTP dari IMAP listener via Redis ───────────────────
+    // Step 4: Tunggu OTP dari Redis (diisi IMAP listener)
     await setJobStatus(email, {
       status: "waiting_otp",
       message: "Menunggu OTP dari email (maks 2 menit)...",
     });
-
     const otp = await waitForOTP(email, 120_000, 2_000);
-    if (!otp) {
-      throw new Error("Timeout: OTP tidak diterima dalam 2 menit");
-    }
-    console.log(`[IDN] [${email}] OTP diterima: ${otp}`);
+    if (!otp) throw new Error("Timeout: OTP tidak diterima dalam 2 menit");
 
-    // ── Step 5: Input OTP ─────────────────────────────────────────────────
+    // Step 5: Input OTP
     await setJobStatus(email, { status: "running", message: `Memasukkan OTP ${otp}...` });
     const otpInputs = await page.$$("input");
     const otpDigits = otp.split("");
@@ -148,23 +126,20 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
       await otpInputs[0].type(otp, { delay: 50 });
     }
 
-    // Klik verifikasi
     await new Promise((r) => setTimeout(r, 500));
     const allButtons = await page.$$("button");
     for (const btn of allButtons) {
-      const text = await btn.evaluate((el: Element) => (el as HTMLElement).innerText.trim());
+      const text = await btn.evaluate((el) => (el as HTMLElement).innerText.trim());
       if (text === "Verifikasi" || text.toLowerCase().includes("verif")) {
         await btn.click();
-        console.log(`[IDN] [${email}] Klik Verifikasi`);
         break;
       }
     }
 
-    // ── Step 6: Tunggu login selesai ──────────────────────────────────────
+    // Step 6: Tunggu login selesai
     await setJobStatus(email, { message: "Menunggu login selesai..." });
     await new Promise((r) => setTimeout(r, 5_000));
 
-    // Ambil cookies
     const cookies = await page.cookies();
     const importantKeys = ["id_token", "access_token", "refresh_token", "client_id"];
     const cookieMap: Record<string, string> = {};
@@ -172,7 +147,7 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
       if (importantKeys.includes(c.name)) cookieMap[c.name] = c.value;
     });
 
-    // ── Step 7: Build & simpan session ───────────────────────────────────
+    // Step 7: Simpan session
     const existing = await getSession(email);
     const session: IDNSession = {
       email,
@@ -204,11 +179,9 @@ export async function runIDNLogin(email: string): Promise<IDNSession> {
       finishedAt: new Date().toISOString(),
     });
 
-    console.log(`[IDN] [${email}] ✅ Session saved`);
     return session;
 
   } catch (err: any) {
-    console.error(`[IDN] [${email}] ❌ Error:`, err.message);
     await setJobStatus(email, {
       status: "failed",
       message: `Gagal: ${err.message}`,
