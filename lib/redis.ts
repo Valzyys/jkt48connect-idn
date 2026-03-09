@@ -1,6 +1,6 @@
 /**
  * lib/redis.ts
- * Vercel KV (Upstash) via REST API — sama persis pola storage.js
+ * Vercel KV (Upstash) via REST API
  */
 
 const KV_URL   = process.env.KV_REST_API_URL;
@@ -20,7 +20,7 @@ async function kv(command: string, ...args: (string | number)[]): Promise<any> {
     const text = await res.text().catch(() => "(no body)");
     throw new Error(`KV HTTP ${res.status}: ${text}`);
   }
-  const json = await res.json();
+  const json = await res.json() as { error?: string; result?: any };
   if (json.error) throw new Error(`KV error: ${json.error}`);
   return json.result;
 }
@@ -128,10 +128,6 @@ export async function clearOTP(email: string): Promise<void> {
   await kv("DEL", KEYS.otpReady(email));
 }
 
-/**
- * Poll Redis setiap intervalMs sampai OTP siap atau timeout.
- * Dipakai scraper untuk menunggu IMAP listener menyimpan OTP.
- */
 export async function waitForOTP(
   email: string,
   timeoutMs = 120_000,
